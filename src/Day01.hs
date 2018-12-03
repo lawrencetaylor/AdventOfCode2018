@@ -20,17 +20,14 @@ pSign = do
       '+' -> 1
       '-' -> -1
 
-pInt :: Parser Int
-pInt = do 
+pLine :: Parser Int
+pLine = do 
   multiplier <- pSign
-  integer <- (read <$> many1 digit :: Parser Int)
+  integer <- pInt
   return $ multiplier * integer
 
-pInts :: Parser [Int]
-pInts = sepBy pInt newline
-
-input :: String -> Either ParseError [Int]
-input = parse pInts
+pLines :: Parser [Int]
+pLines = sepBy pLine newline
 
 -- Solution
 
@@ -45,7 +42,7 @@ firstDuplicate t = firstDuplicateInner t S.empty
 
 main :: IO ()
 main = do
-  input <- (fromRight [] . parse pInts) <$> readData "data\\Day01"
+  input <- (fromRight [] . parse pLines) <$> readData "data\\Day01"
 
   let p1 = foldl (+) 0 input
   putStrLn $ "Day 01 [Part 1] = " ++ (show p1) 

@@ -1,5 +1,6 @@
 module Common(
   readData
+, pInt
 , Common.parse
 ) where
 
@@ -12,6 +13,10 @@ readData :: String -> IO String
 readData relativePath =
   flip combine relativePath <$> getCurrentDirectory
   >>= readFile
+
+pInt :: Parser Int
+pInt = 
+  (read <$> many1 digit :: Parser Int)
 
 parse :: Parser a -> String -> Either ParseError a
 parse parser = P.parse parser []

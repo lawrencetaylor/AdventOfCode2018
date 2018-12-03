@@ -28,6 +28,7 @@ dependencies:
 - filepath
 - directory
 - containers
+- ghc-prim
 
 library:
   source-dirs: src

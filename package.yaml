@@ -29,6 +29,7 @@ dependencies:
 - directory
 - containers
 - ghc-prim
+- time
 
 library:
   source-dirs: src

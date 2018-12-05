@@ -80,7 +80,7 @@ main  = do
   input <- (fromRight [] . parse pLines <$> rawData)
 
   let p1 = partOne input
-  putStrLn $ "Day 02 [Part 1] = " ++ (show p1) 
+  putStrLn $ "Day 03 [Part 1] = " ++ (show p1) 
 
   let p2 = partTwo input
-  putStrLn $ "Day 02 [Part 2] = " ++ (show p2) 
+  putStrLn $ "Day 03 [Part 2] = " ++ (show p2) 

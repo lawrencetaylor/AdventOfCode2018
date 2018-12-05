@@ -147,7 +147,7 @@ main = do
   let sortedInput = L.sortOn fst input
   let state = runState $ reverse sortedInput
   let p1 = partOne state
-  putStrLn $ "Day 02 [Part 1] = " ++ (show p1) 
+  putStrLn $ "Day 04 [Part 1] = " ++ (show p1) 
 
   let p2 = partTwo state
-  putStrLn $ "Day 02 [Part 2] = " ++ (show p2) 
+  putStrLn $ "Day 04 [Part 2] = " ++ (show p2) 

@@ -32,5 +32,8 @@ partTwo input = minimum $ partOne <$> testStrings input
 main :: IO ()
 main = do
   input <- rawData
-  putStrLn $ show $ partOne input -- "dabAcCaCBAcCcaDA"
-  putStrLn $ show $ partTwo input --  "dabAcCaCBAcCcaDA"
+  let p1 = partOne input
+  putStrLn $ "Day 05 [Part 1] = " ++ (show p1) 
+
+  let p2 = partTwo input
+  putStrLn $ "Day 05 [Part 2] = " ++ (show p2) 

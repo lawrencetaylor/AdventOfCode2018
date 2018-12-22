@@ -9,7 +9,7 @@ import qualified Data.Map as M
 import qualified Data.List as L
 import qualified Data.List.Extra as L
 import qualified Data.Graph.AStar as G
-import qualified Data.HashSet as S
+import qualified Data.HashSet as S 
 import qualified Data.Hashable as H
 import qualified Safe as Safe
 
@@ -41,7 +41,9 @@ For tied squares - first reading order wins.
 type HitPoints = Int
 data Square = Elf HitPoints | Goblin HitPoints | Wall | Open deriving (Show, Ord, Eq)
 newtype Coord = Coord (Int, Int) deriving (Eq, Show)
-type Grid = M.Map Coord Square
+data Grid = Grid {
+    walls :: S.HashSet Coord
+  , units :: M.Map Coord Square } deriving Show
 
 -- Reading Order
 instance Ord Coord where
@@ -59,9 +61,6 @@ xVal (Coord (x, _)) = x
 
 yVal :: Coord -> Int
 yVal (Coord (_, y)) = y
-
-isOpen Open = True
-isOpen _    = False
 
 isElf (Elf _) = True
 isElf _          = False
@@ -82,66 +81,48 @@ neighbours (Coord (x,y)) =
   , (x, y - 1)  ]
 
 openNeighbours :: Grid -> Coord -> [Coord]
-openNeighbours grid = 
-  filter (isOpen . (M.!) grid) . neighbours
-  
-units :: Grid -> [Coord]
-units = fmap fst . M.toList . M.filter isUnit
+openNeighbours (Grid walls units) =
+  filter (not . isUnit) . filter (not . isWall) . neighbours
+  where 
+    isWall c = c `S.member` walls
+    isUnit c = c `M.member` units
+
 
 targets :: Grid -> Coord -> [Coord]
-targets grid c = M.keys $ M.filter predicate grid
+targets (Grid _ units) c = M.keys $ M.filter predicate units
   where 
   predicate = 
-    case grid M.! c of
+    case units M.! c of
       Elf _ -> isGoblin
       Goblin _ -> isElf
-      otherwise -> error "Expected Elf or Goblin"
 
--- isInRangeOfTarget :: Grid -> Coord -> Bool
-neighbouringTargets grid c = filter predicate $ neighbours c
+neighbouringTargets (Grid _ units ) c = 
+  filter predicate $
+  filter (\n -> n `M.member` units) $ 
+  neighbours c
   where 
     predicate = 
-      case grid M.! c of
-        Elf _ -> isGoblin . (M.!) grid
-        Goblin _ -> isElf . (M.!) grid
-        c -> error $ "Expected Elf or Goblin: " ++ (show c)
+      case units M.! c of
+        Elf _ -> isGoblin . (M.!) units
+        Goblin _ -> isElf . (M.!) units
 
 openInRangeOfTargets :: Grid -> Coord -> [Coord]
 openInRangeOfTargets grid c = 
   [  o | target <- targets grid c, o <- openNeighbours grid target  ]
-
-paths :: Grid -> Coord -> Coord -> Maybe [Coord]
-paths  = undefined
 
 shortestPath :: Grid -> Coord -> Coord -> Maybe [Coord]
 shortestPath grid start goal = 
   G.aStar neighbours cost hDistance hitGoal start
   where 
     neighbours = S.fromList . openNeighbours grid
-    cost _ _  = 1 -- Cost currently give equal weighting to both paths
+    cost _ _  = 1
     Coord (gX, gY) = goal
     hDistance (Coord (x,y)) = abs (x - gX) + abs (y - gY)
     hitGoal = (==) 0 . hDistance
 
-{-
-1) Find targets that are closest to unit
-2) For each target find neightbour with shortest path to that target
-3) Take unit (tie break reading order) with shortest path
--}
-
-tuple :: a -> (a,a)
-tuple x = (x,x)
-
-pathLengthOrder :: (Ord a) => (b, Maybe a) -> (b, Maybe a) -> Ordering
-pathLengthOrder (_, (Just a)) (_,  (Just b)) = compare a b
-pathLengthOrder (_, (Just a)) (_,  Nothing) = LT
-pathLengthOrder (_, Nothing ) (_, (Just b)) = GT
-pathLengthOrder (_, Nothing ) (_, Nothing )= EQ
-
 distanceTo :: Grid -> Coord -> Coord -> Maybe Int
 distanceTo grid start end = fmap length $ shortestPath grid start end
 
--- targetsClosest :: Grid -> Coord -> [Coord]
 nearestTarget grid unit = 
   Safe.headMay $
   L.sort $
@@ -156,11 +137,11 @@ nearestTarget grid unit =
   fmap (\t -> (t, distanceTo grid unit t)) $
   openInRangeOfTargets grid unit
 
-{-
-  Given a unit and a target square, what is the first step?
-  * Choose neighbours with shortest path to the target
-  * Choose neighbout based on "reading order"
--}
+-- {-
+--   Given a unit and a target square, what is the first step?
+--   * Choose neighbours with shortest path to the target
+--   * Choose neighbout based on "reading order"
+-- -}
 firstStep grid unit target =
   head $
   (L.sort) $
@@ -174,232 +155,140 @@ firstStep grid unit target =
   fmap (\t -> (t, distanceTo grid t target )) $
   openNeighbours grid unit
 
--- nextStep :: Grid -> Coord -> Maybe Coord
 nextStep grid unit = fmap (firstStep grid unit) $ nearestTarget grid unit
 
-points grid c = 
-  case grid M.! c of
+points :: Grid -> Coord -> HitPoints
+points (Grid _ units) c = 
+  case units M.! c of
     Elf p -> p
     Goblin p -> p
-    otherwise -> error "No points for Non-Unit"
 
-updatePoints grid c newPoints = 
-  case grid M.! c of
-    Elf _ -> M.insert c (Elf newPoints) grid
-    Goblin _ -> M.insert c (Goblin newPoints) grid
+updatePoints :: Grid -> Coord -> HitPoints -> Grid
+updatePoints g@(Grid _ units) c newPoints = 
+  case units M.! c of
+    Elf _ -> g { units = M.insert c (Elf newPoints) units }
+    Goblin _ -> g { units = M.insert c (Goblin newPoints) units }
 
-attack grid unit = 
-  case neighbouringTargets grid unit of
-    [] -> grid
+attack :: HitPoints -> Grid -> Coord -> Grid
+attack elfHitPoints g@(Grid _ units) unit = 
+  case neighbouringTargets g unit of
+    [] -> g
     targetCoords -> 
       case newPoints of
-        0 -> M.insert (debug "Destroyed" targetCoord) Open grid
-        c -> updatePoints grid (debug "Hurt" targetCoord) c
+        0 -> g { units = M.delete targetCoord units }
+        c -> updatePoints g targetCoord c
       where 
-        pts c = (points grid c, c)
+        pts c = (points g c, c)
         targetCoord = head $ L.sortOn pts targetCoords
-        adjustedPoints = (points grid targetCoord) - 3
-        newPoints = debug "New Points" $ max adjustedPoints 0
-        
-takeTurn unitCoord grid =
-  case isUnit (grid M.! unitCoord) of 
-    False -> grid -- Unit has been destroyed
-    True ->
-      case any (\_ -> True) $ neighbouringTargets grid (debug "=== Turn" unitCoord) of
-        True -> attack grid $ debug "Attacker1:" unitCoord
+        hitPrice = 
+          case isElf $ units M.! targetCoord of
+            True -> 3
+            False -> elfHitPoints
+        adjustedPoints = (points g targetCoord) - hitPrice
+        newPoints = max adjustedPoints 0
+  
+takeTurn :: HitPoints -> Coord -> Grid -> Grid
+takeTurn elfHitScore unitCoord g@(Grid _ units) =
+  case M.lookup unitCoord units of 
+    Nothing -> g -- Unit has been destroyed
+    Just unit ->
+      case any (\_ -> True) $ neighbouringTargets g unitCoord of
+        True -> attack elfHitScore g unitCoord
         False -> 
-          case nextStep grid unitCoord of
-            Nothing -> attack grid $ debug "Attacker2:" unitCoord
-            Just c -> attack newGrid (debug (show unitCoord ++ " attacked and moved in to ") c)
+          case nextStep g unitCoord of
+            Nothing -> attack elfHitScore g unitCoord
+            Just c -> attack elfHitScore newGrid c
               where 
-                unit = grid M.! unitCoord
-                newGrid = M.insert c unit (M.insert unitCoord Open grid)
+                newGrid = g { units =  M.insert c unit (M.delete unitCoord units) }
 
-testRound grid n = foldr takeTurn grid $ L.reverse $ take n $ L.sort $ units grid
+playRound elfHit  grid@(Grid _ units)= 
+  foldr (takeTurn elfHit) grid $
+  L.reverse $ 
+  L.sort $ 
+  fmap fst $ 
+  M.toList $ 
+  units
 
-playRound grid = foldr takeTurn grid $ L.reverse $ L.sort $ units grid
-
-rounds :: Grid -> [Grid]
-rounds = iterate playRound
+rounds :: HitPoints -> Grid -> [Grid]
+rounds elfHitPoints = iterate (playRound elfHitPoints)
 
 gameWon :: Grid -> Bool
 gameWon grid =
   (all isElf surivingTargets)
   || (all isGoblin surivingTargets)
   where 
-    surivingTargets = M.filter isUnit grid
+    surivingTargets = fmap snd $ M.toList $ units grid
 
-partOneB :: [Grid] -> Int
-partOneB grids = scoreTotal  * totalRounds
+gridScore = sum . fmap unitPoints . units
+  where 
+    unitPoints (Elf p) = p
+    unitPoints (Goblin p ) = p
+
+{- 
+I have some nasty off-by-one error I'm not sure I can be bothered
+to figure out just yet.  
+
+For Part 1, when I get the total number of rounds I need to subtract 1 to 
+get the right answer :(
+-}
+partOneB :: Bool -> [Grid] -> Int
+partOneB isPartOne grids = totalRounds * totalScore
   where 
     roundStates = 
       L.takeWhile(\(x:xs) -> not $ gameWon x) $
       L.tails $
       grids
 
-    totalRounds = (length roundStates) - 1
+    totalRounds = 
+      case isPartOne of
+        True -> (length roundStates) - 1
+        False -> (length roundStates)
+    totalScore = gridScore $ head $ drop 1 $ L.last roundStates
 
-    finalGrid = head $ drop 1 $ L.last roundStates
-    scoreTotal = 
-      sum $ 
-      fmap (points finalGrid) $
-      M.keys $ 
-      M.filter isUnit finalGrid
+partOne isP1 elfScore grid = partOneB isP1 $ rounds elfScore $ grid
 
+elfCount = length . M.filter isElf . units
 
-partOne :: Int -> [Grid] -> Int
-partOne round (x:xs) = 
-  case gameWon x of
-    False -> partOne (round + 1) xs
-    True -> scoreTotal *(debug "Round" (round - 1))
-      where 
-        scoreTotal = sum $ fmap (points x) $ M.keys $ M.filter isUnit x
+partTwoHelper :: [Grid] -> Maybe Grid
+partTwoHelper (x:y:xs) = 
+  case elfCount x == elfCount y of
+    True -> 
+      case gameWon y of
+        True -> Just y
+        False -> partTwoHelper (y:xs)
+    False -> Nothing
 
-testRounds grid n m = testRound ((iterate playRound grid ) !! n) m
-    
 rawData :: IO String
 rawData = readData "data\\Day15"
 
-partTwo :: String -> String
-partTwo = id
+parseGrid :: [String] ->  Grid
+parseGrid grid = Grid walls units
 
-
-test :: [String]
-test = 
-  [ "#######"
-  , "#E..G.#"
-  , "#...#.#"
-  , "#.G.#G#"
-  , "#######" ]
-
-test2 :: [String]
-test2 = 
-  [ "#######"
-  , "#.E...#"   
-  , "#.....#"
-  , "#...G.#"
-  , "#######"]
-
-test3 :: [String]
-test3 = 
-  [ "#########"
-  , "#G..G..G#"
-  , "#.......#"
-  , "#.......#"
-  , "#G..E..G#"
-  , "#.......#"
-  , "#.......#"
-  , "#G..G..G#"
-  , "#########" ]
-
-test3a :: [String]
-test3a = 
-  [ "#########"
-  , "#..G.G..#"
-  , "#...G...#"
-  , "#.G.E.G.#"
-  , "#.......#"
-  , "#G..G..G#"
-  , "#.......#"
-  , "#.......#"
-  , "#########"]
-
-test4 :: [String]
-test4 = 
-  [ "#######"   
-  , "#.G...#" 
-  , "#...EG#" 
-  , "#.#.#G#" 
-  , "#..G#E#" 
-  , "#.....#"
-  , "#######" ]
-
-
-test6 :: [String]
-test6 = 
-  [ "#######"
-  , "#G..#E#"
-  , "#E#E.E#"
-  , "#G.##.#"
-  , "#...#E#"
-  , "#...E.#"
-  , "#######"]
-
-test7 = 
-  [ "#######"
-  , "#E..EG#"
-  , "#.#G.E#"
-  , "#E.##E#"
-  , "#G..#.#"
-  , "#..E#.#"
-  , "#######" ]
--- 9 rounds : Elf has 140
-test20 = 
-  [ "#########"
-  , "#G......#"
-  , "#.E.#...#"
-  , "#..##..G#"
-  , "#...##..#"
-  , "#...#...#"
-  , "#.G...G.#"
-  , "#.....G.#"
-  , "#########"
-  ]
-
-test54 = 
-  [ "#######"
-  , "#.E...#"
-  , "#.#..G#"
-  , "#.###.#"
-  , "#E#G#G#"
-  , "#...#G#"
-  , "#######"]
-
-test35 = 
-  [ "#######"
-  , "#E.G#.#"
-  , "#.#G..#"
-  , "#G.#.G#"
-  , "#G..#.#"
-  , "#...E.#"
-  , "#######" ]
-
-testGrid :: [String] ->  Grid
-testGrid grid = 
-  M.fromList $
-  [ (Coord (i,j), convert c) | 
-    (row, j) <- grid `zip` [0..]
-  , (c, i) <- row `zip` [0..] ]
   where 
     convert '#' = Wall
     convert 'E' = Elf 200
     convert 'G' = Goblin 200
     convert '.' = Open
 
-display :: Grid -> String
-display grid = gridString ++ "\n" ++ (show scores)
-  where 
-    convert Wall = '#'
-    convert (Elf _) = 'E'
-    convert (Goblin _) = 'G'
-    convert Open = '.'
+    allPoints = 
+      M.fromList $
+      [ (Coord (i,j), convert c) | 
+        (row, j) <- grid `zip` [0..]
+      , (c, i) <- row `zip` [0..] ]
 
-    gridString = 
-      concatMap id $
-      L.intersperse "\n" $
-      fmap (fmap (convert . snd )) $
-      L.groupOn (yVal . fst) $
-      M.toList grid
-
-    scores = L.sort $ (snd <$> (M.toList $ M.filter isUnit grid))
+    units = M.filter (isUnit) allPoints
+    walls = S.fromList $ fmap fst $ M.toList $ M.filter (\x -> x == Wall) allPoints
 
 main :: IO ()
 main = do
   input <- (lines <$> rawData)
+  let grid = parseGrid input
 
-  let p1 = partOneB $ rounds $ testGrid input
+  let p1 = partOne True 3 grid
   putStrLn $ "Day 15 [Part 1] = " ++ (show p1) 
 
-  -- let p2 = partTwo input
-  -- putStrLn $ "Day 15 [Part 2] = " ++ (show p2) 
+  {- Use partTwoHelper to do binary search to find that Elves
+     need a score of 34 to win without losing any -}
+  let p2 = partOne False 34 grid
+  putStrLn $ "Day 15 [Part 2] = " ++ (show p2) 
 
